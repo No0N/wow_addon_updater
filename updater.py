@@ -12,7 +12,7 @@ from typing import NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 REPOSITORY = "No0N/wow_addon_updater"
 RELEASE_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 ASSET_NAME = "ElvUI_Updater.exe"
@@ -110,6 +110,8 @@ def download_update(update: AppUpdate) -> Path:
 def launch_replacement(downloaded_file: Path) -> None:
     """Запустить скрытый процесс, который заменит EXE после закрытия приложения."""
     executable = Path(sys.executable).resolve()
+    working_directory = executable.parent
+    current_pid = os.getpid()
 
     def ps_quote(path: Path) -> str:
         return "'" + str(path).replace("'", "''") + "'"
@@ -117,11 +119,15 @@ def launch_replacement(downloaded_file: Path) -> None:
     command = (
         f"$source={ps_quote(downloaded_file.resolve())};"
         f"$target={ps_quote(executable)};"
+        f"$workdir={ps_quote(working_directory)};"
+        f"$oldPid={current_pid};"
+        "Wait-Process -Id $oldPid -Timeout 60 -ErrorAction SilentlyContinue;"
         "$done=$false;"
-        "for($i=0;$i -lt 120 -and -not $done;$i++){"
-        "try{Move-Item -LiteralPath $source -Destination $target -Force -ErrorAction Stop;$done=$true}"
+        "for($i=0;$i -lt 20 -and -not $done;$i++){"
+        "try{Copy-Item -LiteralPath $source -Destination $target -Force -ErrorAction Stop;"
+        "Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue;$done=$true}"
         "catch{Start-Sleep -Milliseconds 500}};"
-        "if($done){Start-Process -FilePath $target}"
+        "if($done){Start-Process -FilePath $target -WorkingDirectory $workdir}"
     )
     encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
