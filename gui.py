@@ -36,7 +36,7 @@ class MainWindow:
         self.root = tk.Tk()
         self.root.title("ElvUI Updater")
         self.root.minsize(480, 400)
-        self.root.geometry("560x480")
+        self.root.geometry("560x450")
         self.root.resizable(False, False)
 
         self.cfg = load_config()
@@ -66,12 +66,6 @@ class MainWindow:
         self.lbl_installed.pack(anchor=tk.W)
         self.btn_check = ttk.Button(ver_frame, text="Проверить версию на сайте", command=self._on_check_version)
         self.btn_check.pack(anchor=tk.W, pady=(6, 0))
-        self.btn_check_app = ttk.Button(
-            ver_frame,
-            text=f"Проверить обновление программы (v{APP_VERSION})",
-            command=self._on_check_app_update,
-        )
-        self.btn_check_app.pack(anchor=tk.W, pady=(4, 0))
 
         # --- Папки версий игры ---
         retail_frame = ttk.LabelFrame(main, text="Папка WoW актуал (Retail)", padding=6)
@@ -131,7 +125,7 @@ class MainWindow:
         hint_frame.pack(fill=tk.X, pady=(4, 0))
         ttk.Label(
             hint_frame,
-            text="Сделано для Ванахейм",
+            text=f"Сделано для Ванахейм · v. {APP_VERSION}",
             font=("", 8),
             foreground="gray",
         ).pack(side=tk.RIGHT)
@@ -334,7 +328,6 @@ class MainWindow:
 
     def _on_check_app_update(self, silent: bool = False) -> None:
         """Проверить последний GitHub Release, не блокируя интерфейс."""
-        self.btn_check_app.config(state="disabled")
         threading.Thread(
             target=self._check_app_update_worker,
             args=(silent,),
@@ -350,7 +343,6 @@ class MainWindow:
             self.root.after(0, lambda: self._finish_app_update_check(update, None, silent))
 
     def _finish_app_update_check(self, update, error: Exception | None, silent: bool) -> None:
-        self.btn_check_app.config(state="normal")
         if error:
             if not silent:
                 messagebox.showerror("Обновление программы", str(error))
@@ -359,14 +351,63 @@ class MainWindow:
             if not silent:
                 messagebox.showinfo("Обновление программы", "Установлена последняя версия.")
             return
+        self._show_app_update_dialog(update)
+
+    def _show_app_update_dialog(self, update) -> None:
+        """Показать предложение обновления с понятными названиями кнопок."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Доступно обновление")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        content = ttk.Frame(dialog, padding=16)
+        content.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            content,
+            text="Доступна новая версия программы",
+            font=("", 10, "bold"),
+        ).pack(anchor=tk.W)
+        ttk.Label(
+            content,
+            text=(
+                f"Установленная версия: v. {APP_VERSION}\n"
+                f"Версия на GitHub: v. {update.version}"
+            ),
+        ).pack(anchor=tk.W, pady=(10, 12))
+
         notes = update.notes.strip()
-        message = f"Доступна версия {update.version}. Обновить программу сейчас?"
         if notes:
-            message += "\n\n" + notes[:1000]
-        if messagebox.askyesno("Обновление программы", message):
-            self.btn_check_app.config(state="disabled")
+            ttk.Label(
+                content,
+                text=notes[:500],
+                wraplength=430,
+                foreground="gray",
+            ).pack(anchor=tk.W, pady=(0, 12))
+
+        buttons = ttk.Frame(content)
+        buttons.pack(fill=tk.X)
+
+        def install_now() -> None:
+            dialog.destroy()
             self.lbl_status.config(text="Скачивание обновления программы…")
-            threading.Thread(target=self._install_app_update_worker, args=(update,), daemon=True).start()
+            threading.Thread(
+                target=self._install_app_update_worker,
+                args=(update,),
+                daemon=True,
+            ).start()
+
+        ttk.Button(buttons, text="Обновить сейчас", command=install_now).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Обновить позже", command=dialog.destroy).pack(
+            side=tk.LEFT,
+            padx=(8, 0),
+        )
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.focus_set()
 
     def _install_app_update_worker(self, update) -> None:
         try:
@@ -378,7 +419,6 @@ class MainWindow:
             self.root.after(0, self.root.destroy)
 
     def _app_update_failed(self, error: Exception) -> None:
-        self.btn_check_app.config(state="normal")
         self.lbl_status.config(text="")
         messagebox.showerror("Обновление программы", str(error))
 
