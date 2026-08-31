@@ -1,0 +1,23 @@
+name: Build release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: pyinstaller --noconfirm build.spec
+      - run: gh release create $env:GITHUB_REF_NAME dist/ElvUI_Updater.exe --generate-notes --title $env:GITHUB_REF_NAME
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,5 @@
+# Сборка в .exe (установить при сборке)
+pyinstaller>=6.0.0
+
+# Для иконки из SVG (опционально): python build_icon.py
+# cairosvg Pillow
