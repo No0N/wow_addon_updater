@@ -376,15 +376,6 @@ class MainWindow:
             ),
         ).pack(anchor=tk.W, pady=(10, 12))
 
-        notes = update.notes.strip()
-        if notes:
-            ttk.Label(
-                content,
-                text=notes[:500],
-                wraplength=430,
-                foreground="gray",
-            ).pack(anchor=tk.W, pady=(0, 12))
-
         buttons = ttk.Frame(content)
         buttons.pack(fill=tk.X)
 
