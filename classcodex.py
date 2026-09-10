@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Callable, NamedTuple
@@ -19,6 +20,7 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_FILE_COUNT = 5000
+RETRY_DELAYS = (0.5, 1.5)
 
 
 class ClassCodexInfo(NamedTuple):
@@ -36,13 +38,29 @@ def _normalize_version(version: str) -> str:
     return version[1:] if version.lower().startswith("v") else version
 
 
-def _fetch_bytes(url: str, limit: int, timeout: int = 20) -> bytes:
+def _fetch_bytes(url: str, limit: int, timeout: int = 30) -> bytes:
+    """Получить данные U.GG, повторяя запрос при временных сетевых сбоях."""
     request = Request(url, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"})
-    with urlopen(request, timeout=timeout) as response:
-        data = response.read(limit + 1)
-    if len(data) > limit:
-        raise RuntimeError(f"Ответ U.GG превышает допустимый размер: {url}")
-    return data
+    attempts = len(RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                data = response.read(limit + 1)
+            if len(data) > limit:
+                raise RuntimeError(f"Ответ U.GG превышает допустимый размер: {url}")
+            return data
+        except HTTPError as exc:
+            if exc.code not in (408, 429) and exc.code < 500:
+                raise
+            last_error: Exception = exc
+        except (URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+        if attempt < len(RETRY_DELAYS):
+            time.sleep(RETRY_DELAYS[attempt])
+    raise RuntimeError(
+        f"Сервер U.GG не ответил после {attempts} попыток. "
+        "Проверьте интернет и повторите проверку позже."
+    ) from last_error
 
 
 def _load_json(data: bytes, label: str) -> dict:
