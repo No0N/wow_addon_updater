@@ -46,12 +46,13 @@ class MainWindow:
         self._classcodex_local_current = False
         self._classcodex_verified_path = ""
         self._update_in_progress = False
+        self._version_check_in_progress = False
         self._build_ui()
         self._apply_config()
         self._update_button_state()
-        # Проверка версии на сайте — автоматически при запуске
-        self.root.after(300, self._on_check_version)
-        self.root.after(1000, lambda: self._on_check_app_update(silent=True))
+        # Обновление программы проверяется независимо от доступности сайтов аддонов.
+        self.root.after(100, lambda: self._on_check_app_update(silent=True))
+        self.root.after(300, lambda: self._on_check_version(silent=True))
 
     def _build_ui(self) -> None:
         main = ttk.Frame(self.root, padding=12)
@@ -221,64 +222,90 @@ class MainWindow:
             text="Установлено: " + (" | ".join(parts) if parts else "—")
         )
 
-    def _on_check_version(self) -> None:
+    def _on_check_version(self, silent: bool = False) -> None:
+        if self._version_check_in_progress:
+            return
+        self._version_check_in_progress = True
         self.lbl_version.config(text="Проверка…")
-        self.root.update()
+        self.btn_check.config(state="disabled")
+        classcodex_path = self.entry_retail.get().strip()
+        threading.Thread(
+            target=self._check_versions_worker,
+            args=(classcodex_path, silent),
+            daemon=True,
+        ).start()
+
+    def _check_versions_worker(self, classcodex_path: str, silent: bool) -> None:
         try:
             info = get_elvui_info()
             classcodex_info = get_classcodex_info()
-            self._site_version = info.version
-            self._classcodex_site_version = classcodex_info.version
-            self._classcodex_build_id = classcodex_info.build_id
-            classcodex_path = self.entry_retail.get().strip()
-            self._classcodex_verified_path = classcodex_path
-            self._classcodex_local_current = bool(classcodex_path) and is_installed_classcodex_current(
+            classcodex_current = bool(classcodex_path) and is_installed_classcodex_current(
                 Path(classcodex_path), classcodex_info
             )
-            if self._classcodex_local_current:
-                self.cfg["classcodex_build_id"] = classcodex_info.build_id
-                save_config(self.cfg)
-            self._refresh_installed_versions()
-            site_text = (
-                f"На сайте: ElvUI {info.version} | ClassCodex {classcodex_info.version}"
+        except Exception as exc:
+            self.root.after(
+                0,
+                lambda error=exc: self._finish_version_check_error(error, silent),
             )
-            self.lbl_version.config(text=site_text)
-            self._update_button_state()
-            # Подсказка: нужное ли обновление (если есть установленные версии)
-            retail_p = self.entry_retail.get().strip()
-            classic_p = self.entry_classic.get().strip()
-            need_update = False
-            for p, selected in (
-                (retail_p, self.var_update_retail.get()),
-                (classic_p, self.var_update_classic.get()),
-            ):
-                if not p or not selected:
-                    continue
-                inst = get_installed_elvui_version(Path(p))
-                if inst and inst != info.version:
+        else:
+            self.root.after(
+                0,
+                lambda: self._finish_version_check(
+                    info, classcodex_info, classcodex_path, classcodex_current
+                ),
+            )
+
+    def _finish_version_check(
+        self, info, classcodex_info, classcodex_path: str, classcodex_current: bool
+    ) -> None:
+        self._version_check_in_progress = False
+        self.btn_check.config(state="normal" if not self._update_in_progress else "disabled")
+        self._site_version = info.version
+        self._classcodex_site_version = classcodex_info.version
+        self._classcodex_build_id = classcodex_info.build_id
+        self._classcodex_verified_path = classcodex_path
+        self._classcodex_local_current = classcodex_current
+        if classcodex_current:
+            self.cfg["classcodex_build_id"] = classcodex_info.build_id
+            save_config(self.cfg)
+        self._refresh_installed_versions()
+        self.lbl_version.config(
+            text=f"На сайте: ElvUI {info.version} | ClassCodex {classcodex_info.version}"
+        )
+        self._update_button_state()
+
+        need_update = False
+        for path, selected in (
+            (self.entry_retail.get().strip(), self.var_update_retail.get()),
+            (self.entry_classic.get().strip(), self.var_update_classic.get()),
+        ):
+            if path and selected:
+                installed = get_installed_elvui_version(Path(path))
+                if installed and installed != info.version:
                     need_update = True
                     break
-            classcodex_p = self.entry_retail.get().strip()
-            if classcodex_p and self.var_update_classcodex.get():
-                inst = get_installed_classcodex_version(Path(classcodex_p))
-                if (
-                    inst != classcodex_info.version
-                    or not self._classcodex_local_current
-                ):
-                    need_update = True
-            if need_update:
-                self.lbl_installed.config(
-                    text=(self.lbl_installed.cget("text") or "") + " — доступно обновление"
-                )
-        except Exception as e:
-            self._site_version = None
-            self._classcodex_site_version = None
-            self._classcodex_build_id = None
-            self._classcodex_local_current = False
-            self._classcodex_verified_path = ""
-            self.lbl_version.config(text="Ошибка проверки")
-            messagebox.showerror("Ошибка", str(e))
-            self._update_button_state()
+        current_classcodex_path = self.entry_retail.get().strip()
+        if current_classcodex_path and self.var_update_classcodex.get():
+            installed = get_installed_classcodex_version(Path(current_classcodex_path))
+            if installed != classcodex_info.version or not classcodex_current:
+                need_update = True
+        if need_update:
+            self.lbl_installed.config(
+                text=(self.lbl_installed.cget("text") or "") + " — доступно обновление"
+            )
+
+    def _finish_version_check_error(self, error: Exception, silent: bool) -> None:
+        self._version_check_in_progress = False
+        self.btn_check.config(state="normal" if not self._update_in_progress else "disabled")
+        self._site_version = None
+        self._classcodex_site_version = None
+        self._classcodex_build_id = None
+        self._classcodex_local_current = False
+        self._classcodex_verified_path = ""
+        self.lbl_version.config(text="Ошибка проверки")
+        if not silent:
+            messagebox.showerror("Ошибка", str(error))
+        self._update_button_state()
 
     def _on_update(self) -> None:
         self._save_config()
