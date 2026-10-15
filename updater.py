@@ -1,10 +1,8 @@
 """Проверка и установка обновлений приложения через GitHub Releases."""
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +10,7 @@ from typing import NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.6"
+APP_VERSION = "1.7"
 REPOSITORY = "No0N/wow_addon_updater"
 RELEASE_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 ASSET_NAME = "ElvUI_Updater.exe"
@@ -108,31 +106,49 @@ def download_update(update: AppUpdate) -> Path:
 
 
 def launch_replacement(downloaded_file: Path) -> None:
-    """Запустить скрытый процесс, который заменит EXE после закрытия приложения."""
+    """Запустить CMD-помощник, который заменит EXE после закрытия приложения."""
     executable = Path(sys.executable).resolve()
     working_directory = executable.parent
-    current_pid = os.getpid()
+    script = executable.with_name(executable.name + ".update.cmd")
+    log = executable.with_name(executable.name + ".update.log")
 
-    def ps_quote(path: Path) -> str:
-        return "'" + str(path).replace("'", "''") + "'"
+    def batch_value(path: Path) -> str:
+        return str(path.resolve()).replace("%", "%%")
 
-    command = (
-        f"$source={ps_quote(downloaded_file.resolve())};"
-        f"$target={ps_quote(executable)};"
-        f"$workdir={ps_quote(working_directory)};"
-        f"$oldPid={current_pid};"
-        "Wait-Process -Id $oldPid -Timeout 60 -ErrorAction SilentlyContinue;"
-        "$done=$false;"
-        "for($i=0;$i -lt 20 -and -not $done;$i++){"
-        "try{Copy-Item -LiteralPath $source -Destination $target -Force -ErrorAction Stop;"
-        "Remove-Item -LiteralPath $source -Force -ErrorAction SilentlyContinue;$done=$true}"
-        "catch{Start-Sleep -Milliseconds 500}};"
-        "if($done){Start-Process -FilePath $target -WorkingDirectory $workdir}"
+    script_text = (
+        "@echo off\r\n"
+        "setlocal\r\n"
+        f'set "SOURCE={batch_value(downloaded_file)}"\r\n'
+        f'set "TARGET={batch_value(executable)}"\r\n'
+        f'set "WORKDIR={batch_value(working_directory)}"\r\n'
+        f'set "LOGFILE={batch_value(log)}"\r\n'
+        '>"%LOGFILE%" echo Waiting for the old application to close...\r\n'
+        "for /L %%I in (1,1,120) do (\r\n"
+        '  copy /B /Y "%SOURCE%" "%TARGET%" >nul 2>>"%LOGFILE%"\r\n'
+        "  if not errorlevel 1 goto replaced\r\n"
+        "  timeout /T 1 /NOBREAK >nul\r\n"
+        ")\r\n"
+        '>>"%LOGFILE%" echo Failed to replace the application.\r\n'
+        "exit /B 1\r\n"
+        ":replaced\r\n"
+        'del /Q "%SOURCE%" >>"%LOGFILE%" 2>&1\r\n'
+        'start "" /D "%WORKDIR%" "%TARGET%"\r\n'
+        "if errorlevel 1 exit /B 1\r\n"
+        'del /Q "%LOGFILE%" >nul 2>&1\r\n'
+        'del /Q "%~f0" >nul 2>&1\r\n'
     )
-    encoded = base64.b64encode(command.encode("utf-16-le")).decode("ascii")
-    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    try:
+        script.write_text(script_text, encoding="mbcs")
+    except OSError as exc:
+        raise RuntimeError(f"Не удалось подготовить замену программы: {exc}") from exc
+
+    creation_flags = (
+        getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        | getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    )
     subprocess.Popen(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        ["cmd.exe", "/D", "/C", "call", str(script)],
         creationflags=creation_flags,
         close_fds=True,
     )
