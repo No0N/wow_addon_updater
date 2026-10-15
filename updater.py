@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.9"
+APP_VERSION = "2.0"
 REPOSITORY = "No0N/wow_addon_updater"
 RELEASE_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 ASSET_NAME = "ElvUI_Updater.exe"
@@ -132,6 +133,7 @@ def launch_replacement(downloaded_file: Path) -> None:
         "exit /B 1\r\n"
         ":replaced\r\n"
         'del /Q "%SOURCE%" >>"%LOGFILE%" 2>&1\r\n'
+        'set "PYINSTALLER_RESET_ENVIRONMENT=1"\r\n'
         'start "" /D "%WORKDIR%" "%TARGET%"\r\n'
         "if errorlevel 1 exit /B 1\r\n"
         'del /Q "%LOGFILE%" >nul 2>&1\r\n'
@@ -147,8 +149,11 @@ def launch_replacement(downloaded_file: Path) -> None:
         | getattr(subprocess, "DETACHED_PROCESS", 0)
         | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     )
+    clean_environment = os.environ.copy()
+    clean_environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(
         ["cmd.exe", "/D", "/C", "call", str(script)],
         creationflags=creation_flags,
         close_fds=True,
+        env=clean_environment,
     )
