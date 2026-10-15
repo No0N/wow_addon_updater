@@ -479,7 +479,7 @@ class MainWindow:
         if classcodex_info and (
             not is_installed_classcodex_current(Path(path_classcodex), classcodex_info)
         ):
-            self._set_status_from_worker("Скачивание ClassCodex с U.GG…")
+            self._set_status_from_worker("Скачивание ClassCodex…")
             try:
                 classcodex_zip = download_classcodex_zip(
                     classcodex_info,

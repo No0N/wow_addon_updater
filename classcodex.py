@@ -13,7 +13,9 @@ from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 UGG_CDN_BASE = "https://wow-class-codex.s3.us-east-1.amazonaws.com"
-UGG_CHANNEL_CONFIG_URL = f"{UGG_CDN_BASE}/channels/retail/production/config.json"
+MIRROR_BASE = "https://clcdx.horosh.lol"
+CHANNEL_CONFIG_PATH = "/channels/retail/production/config.json"
+UGG_CHANNEL_CONFIG_URL = f"{UGG_CDN_BASE}{CHANNEL_CONFIG_PATH}"
 VERSION_PREFIX = "## Version:"
 USER_AGENT = "ElvUI-Updater/1.0"
 MAX_CONFIG_BYTES = 64 * 1024
@@ -38,10 +40,15 @@ def _normalize_version(version: str) -> str:
     return version[1:] if version.lower().startswith("v") else version
 
 
-def _fetch_bytes(url: str, limit: int, timeout: int = 30) -> bytes:
+def _fetch_bytes(
+    url: str,
+    limit: int,
+    timeout: int = 30,
+    retry_delays: tuple[float, ...] = RETRY_DELAYS,
+) -> bytes:
     """Получить данные U.GG, повторяя запрос при временных сетевых сбоях."""
     request = Request(url, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"})
-    attempts = len(RETRY_DELAYS) + 1
+    attempts = len(retry_delays) + 1
     for attempt in range(attempts):
         try:
             with urlopen(request, timeout=timeout) as response:
@@ -55,8 +62,8 @@ def _fetch_bytes(url: str, limit: int, timeout: int = 30) -> bytes:
             last_error: Exception = exc
         except (URLError, TimeoutError, OSError) as exc:
             last_error = exc
-        if attempt < len(RETRY_DELAYS):
-            time.sleep(RETRY_DELAYS[attempt])
+        if attempt < len(retry_delays):
+            time.sleep(retry_delays[attempt])
     raise RuntimeError(
         f"Сервер U.GG не ответил после {attempts} попыток. "
         "Проверьте интернет и повторите проверку позже."
@@ -84,10 +91,41 @@ def _validate_ugg_url(url: str, expected_path: str) -> None:
         raise RuntimeError("U.GG вернул недопустимую ссылку на манифест ClassCodex.")
 
 
+def _validate_download_url(url: str, expected_path: str) -> None:
+    parsed = urlparse(url)
+    allowed_hosts = {urlparse(UGG_CDN_BASE).netloc, urlparse(MIRROR_BASE).netloc}
+    if parsed.scheme != "https" or parsed.netloc not in allowed_hosts or parsed.path != expected_path:
+        raise RuntimeError("Недопустимый адрес загрузки ClassCodex.")
+
+
+def _fetch_channel_config() -> tuple[bytes, str]:
+    """Получить конфигурацию напрямую либо через проверенное резервное зеркало."""
+    errors: list[Exception] = []
+    sources = (
+        (UGG_CDN_BASE, 8, ()),
+        (MIRROR_BASE, 20, RETRY_DELAYS),
+    )
+    for base_url, timeout, retry_delays in sources:
+        try:
+            data = _fetch_bytes(
+                f"{base_url}{CHANNEL_CONFIG_PATH}",
+                MAX_CONFIG_BYTES,
+                timeout=timeout,
+                retry_delays=retry_delays,
+            )
+            return data, base_url
+        except (HTTPError, URLError, OSError, RuntimeError) as exc:
+            errors.append(exc)
+    raise RuntimeError(
+        "Не удалось связаться ни с U.GG, ни с резервным зеркалом ClassCodex."
+    ) from errors[-1]
+
+
 def get_classcodex_info() -> ClassCodexInfo:
     """Получить текущую production-сборку ClassCodex для Retail с U.GG."""
     try:
-        config = _load_json(_fetch_bytes(UGG_CHANNEL_CONFIG_URL, MAX_CONFIG_BYTES), "config.json")
+        config_bytes, source_base = _fetch_channel_config()
+        config = _load_json(config_bytes, "config.json")
         if config.get("gameVersionId") != "retail" or config.get("channel") != "production":
             raise RuntimeError("U.GG вернул сборку не для Retail production.")
         build_id = str(config["buildId"])
@@ -98,7 +136,10 @@ def get_classcodex_info() -> ClassCodexInfo:
         if not _is_sha256(manifest_sha256):
             raise RuntimeError("U.GG вернул некорректную контрольную сумму манифеста.")
 
-        manifest_bytes = _fetch_bytes(manifest_url, MAX_MANIFEST_BYTES)
+        manifest_path = f"/builds/retail/{build_id}/manifest.json"
+        download_manifest_url = f"{source_base}{manifest_path}"
+        _validate_download_url(download_manifest_url, manifest_path)
+        manifest_bytes = _fetch_bytes(download_manifest_url, MAX_MANIFEST_BYTES)
         if hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha256:
             raise RuntimeError("Контрольная сумма манифеста ClassCodex не совпала.")
         manifest = _load_json(manifest_bytes, "manifest.json")
@@ -114,7 +155,15 @@ def get_classcodex_info() -> ClassCodexInfo:
     except (HTTPError, URLError, OSError, KeyError, TypeError, ValueError) as exc:
         raise RuntimeError(f"Не удалось получить данные ClassCodex с U.GG: {exc}") from exc
 
-    return ClassCodexInfo(version, last_update, manifest_url, manifest_sha256, build_id, sequence, files)
+    return ClassCodexInfo(
+        version,
+        last_update,
+        download_manifest_url,
+        manifest_sha256,
+        build_id,
+        sequence,
+        files,
+    )
 
 
 def get_installed_classcodex_version(target_dir: Path) -> str | None:
@@ -211,6 +260,10 @@ def download_classcodex_zip(
             raise RuntimeError("Контрольная сумма манифеста ClassCodex не совпала.")
         manifest = _load_json(manifest_bytes, "manifest.json")
         checked_files = _parse_manifest_files(manifest)
+        manifest_path = f"/builds/retail/{info.build_id}/manifest.json"
+        _validate_download_url(info.download_url, manifest_path)
+        parsed_source = urlparse(info.download_url)
+        source_base = f"{parsed_source.scheme}://{parsed_source.netloc}"
         files_to_download = (
             _files_requiring_update(target_dir, checked_files)
             if target_dir is not None
@@ -220,7 +273,7 @@ def download_classcodex_zip(
         def fetch_file(item: tuple[str, int, str]) -> tuple[str, bytes]:
             path, size, digest = item
             encoded_path = "/".join(quote(part, safe="") for part in PurePosixPath(path).parts)
-            url = f"{UGG_CDN_BASE}/builds/retail/{info.build_id}/{encoded_path}"
+            url = f"{source_base}/builds/retail/{info.build_id}/{encoded_path}"
             data = _fetch_bytes(url, min(MAX_FILE_BYTES, size + 1), timeout=60)
             if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
                 raise RuntimeError(f"Проверка загруженного файла не пройдена: {path}")

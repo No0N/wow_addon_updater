@@ -1,0 +1,18 @@
+[Unit]
+Description=Synchronize verified ClassCodex mirror
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/classcodex-mirror/classcodex_mirror.py
+User=classcodex-mirror
+Group=classcodex-mirror
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/classcodex
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+clcdx.horosh.lol {
+	root * /srv/classcodex/public
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+	@allowed path /health.json /channels/retail/production/config.json /builds/retail/*
+	handle @allowed {
+		file_server
+	}
+	respond 404
+}

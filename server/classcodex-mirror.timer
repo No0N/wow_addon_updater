@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh ClassCodex mirror every 30 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+RandomizedDelaySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
