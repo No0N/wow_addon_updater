@@ -10,7 +10,7 @@ from typing import NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.7"
+APP_VERSION = "1.8"
 REPOSITORY = "No0N/wow_addon_updater"
 RELEASE_API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
 ASSET_NAME = "ElvUI_Updater.exe"
