@@ -57,7 +57,14 @@ def download_elvui_zip(download_url: str) -> bytes:
 
 
 # Имена .toc главного аддона ElvUI (версия во всех одна)
-ELVUI_TOC_NAMES = ("ElvUI_Mainline.toc", "ElvUI_Wrath.toc", "ElvUI_TBC.toc", "ElvUI_Mists.toc", "ElvUI_Vanilla.toc")
+ELVUI_TOC_NAMES = (
+    "ElvUI.toc",
+    "ElvUI_Mainline.toc",
+    "ElvUI_Wrath.toc",
+    "ElvUI_TBC.toc",
+    "ElvUI_Mists.toc",
+    "ElvUI_Vanilla.toc",
+)
 VERSION_PREFIX = "## Version:"
 
 

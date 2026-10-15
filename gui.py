@@ -472,6 +472,13 @@ class MainWindow:
                         continue
                     try:
                         extract_elvui_to_folder(zip_data, Path(folder))
+                        installed_version = get_installed_elvui_version(Path(folder))
+                        if installed_version != info.version:
+                            raise RuntimeError(
+                                "проверка после установки не пройдена: "
+                                f"ожидалась версия {info.version}, найдена "
+                                f"{installed_version or 'неизвестная версия'}"
+                            )
                         updated.append(f"ElvUI {info.version} ({label})")
                     except Exception as e:
                         errors.append(f"{label}: {e}")
@@ -494,6 +501,10 @@ class MainWindow:
                     Path(path_classcodex),
                     allow_partial=True,
                 )
+                if not is_installed_classcodex_current(
+                    Path(path_classcodex), classcodex_info
+                ):
+                    raise RuntimeError("проверка файлов после установки не пройдена")
                 updated.append(f"ClassCodex {classcodex_info.version}")
             except Exception as e:
                 errors.append(f"ClassCodex: {e}")
